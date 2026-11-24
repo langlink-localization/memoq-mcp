@@ -1,16 +1,45 @@
-# @langlink/memoq-mcp
+# memoq-mcp (`@langlink/memoq-mcp`)
 
-Local Windows stdio MCP connector for **memoQ Desktop (10 / 11 / 12)** supporting Codex CLI, Claude Code, WorkBuddy, ZCode, and Trae. It provides Preview read/focus, a staged translation pool, confirmed writeback, and a visual setup wizard.
+[中文说明](./README.zh-CN.md)
 
-## Quick Config
+A local Windows **Model Context Protocol (MCP)** server for **memoQ Desktop (10 / 11 / 12)**, compatible with **Codex CLI**, **Claude Code**, **Cursor**, **WorkBuddy**, **ZCode**, and **Trae**.
+
+Connect your AI agent to memoQ Desktop for **translation, proofreading, polishing, and deterministic QA** — read live Preview segments, jump to segments in the editor, stage drafts with inline tag protection, review in a local bilingual workbench, and write approved translations back via memoQ Pre-translate.
+
+## Features
+
+- **Live Preview Read & Focus**: Read active or paginated document segments (including glued Views) and jump memoQ editor focus to any segment.
+- **Translation, Proofreading & Polishing**: Stage 1–200 segments per batch as drafts, iterate on translator comments in multiple rounds, and keep inline `<span data-mqitag>` tags intact.
+- **Deterministic QA & Terminology**: Run 23 built-in QA rules, CSV/TBX glossary checks, up to 20 custom rules (`required` / `forbidden` / `maxLength`), and export reports to Excel, CSV, or HTML.
+- **Local Review Workbench**: Inspect drafts side-by-side, edit translations, leave revision comments, and approve segments for memoQ Pre-translate.
+
+## Installation
+
+Requires **Windows**, **Node.js >= 22**, and **memoQ Desktop (10 / 11 / 12)**.
+
+### Codex CLI
+
+```bash
+codex mcp add memoq -- npx -y @langlink/memoq-mcp
+```
+
+### Claude Code
+
+```bash
+claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mcp
+```
+
+### Other MCP Clients
+
+Generate or write configuration automatically:
 
 ```bash
 npx -y @langlink/memoq-mcp config --client codex
 npx -y @langlink/memoq-mcp config --client claude
-npx -y @langlink/memoq-mcp config --client workbuddy --write
+npx -y @langlink/memoq-mcp config --client all
 ```
 
-Or add manually in `~/.workbuddy/mcp.json` (preserving any existing connectors such as `langlink`):
+Or add to your client's `mcp.json`:
 
 ```json
 {
@@ -23,32 +52,53 @@ Or add manually in `~/.workbuddy/mcp.json` (preserving any existing connectors s
 }
 ```
 
-Register the server with Codex or Claude Code:
+## First-Time memoQ Setup (Optional for Preview, Required for Pre-translate)
+
+Preview reading, segment focus, and QA work immediately with no plugin required. To write staged translations into memoQ via **Pre-translate**:
+
+1. Ask your agent to run `memoq_setup` (starts in read-only `plan` mode to detect your memoQ directory and plugin DLL).
+2. Review the target paths and confirm installation (`action: "install", confirmed: true`). This installs `MemoQ.AI.Hub.Plugin.dll` from [memoq-ai-hub](https://github.com/langlink-localization/memoq-ai-hub) with SHA-256 verification.
+3. Restart **memoQ Desktop**.
+4. In memoQ, open **Resource Console → MT settings → Create new** (`My Computer`), enable **memoQ AI Hub**, verify `Gateway Base URL` is `http://127.0.0.1:5271`, and enable **Pre-translation / Match and Patch / Send best fuzzy TM match / Self-learning MT**.
+5. Enable the resource in **Options → Default resources → MT settings** (and **Project home → Settings → MT settings** for existing projects).
+
+## Tools (14)
+
+| Tool | Type | Description |
+| :--- | :--- | :--- |
+| `memoq_status` | Read | Check Preview connection, active document, port `5271` status, DLL status, and staged counts. |
+| `memoq_list_documents` | Read | List open memoQ documents and glued Views cached in Preview. |
+| `memoq_get_active_segment` | Read | Read the active segment, neighbor context, focused ranges, and `mappingCertain`. |
+| `memoq_get_document_segments` | Read | Paginated read (`offset` / `nextOffset`) of cached Preview segments with filters. |
+| `memoq_focus_segment` | Write | Jump memoQ editor selection to a specific `previewPartId`. |
+| `memoq_stage_translations` | Write | Stage 1–200 draft translations with inline tag protection. |
+| `memoq_list_staged` | Read | Paginated list (`offset` / `nextOffset`) of staged entries, statuses, and comments. |
+| `memoq_open_review` | Read | Get the local URL for the bilingual Review & QA Workbench. |
+| `memoq_approve_staged` | Write | Release staged translations to memoQ Pre-translate or retract them to `draft`. |
+| `memoq_qa_document` | Read | Run deterministic QA rules, custom rules, glossary checks, and MQM scoring. |
+| `memoq_clear_staged` | Destructive | Permanently delete staged entries and revision history (`confirmed: true`). |
+| `memoq_get_confirmed_translations` | Read | Read translator-confirmed segments written back by memoQ `StoreTranslation`. |
+| `memoq_get_recent_mt_requests` | Read | Inspect recent Pre-translate misses, inline-tag segments, and fuzzy TM hints. |
+| `memoq_setup` | Plan / Destructive | Diagnose (`plan`) or install/uninstall (`confirmed: true`) the memoQ MT plugin DLL. |
+
+## Development
+
+Requires **Node.js >= 22.13** and **pnpm 12**.
 
 ```bash
-codex mcp add memoq -- npx -y @langlink/memoq-mcp
-claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mcp
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm package:memoq-mcp
 ```
 
-## Available Tools (14)
+To rebuild the Windows `.NET 4.8` helper (`MemoQ.Bridge.Helper.exe`):
 
-- `memoq_status` — inspect Preview connection, active document, multi-document cache summary, port `5271` owner, `100,000`-capacity staging pool, and DLL status.
-- `memoq_list_documents` — list all open memoQ documents and glued Views cached during this Preview session with per-document segment and staging counts.
-- `memoq_get_active_segment` — read active source/target, focused ranges, neighbor context, and `mappingCertain`.
-- `memoq_get_document_segments` — read cached document segments. Pass `nextOffset` as `offset` with the same document and filters. The JSON text and `structuredContent` provide the same data.
-- `memoq_focus_segment` — jump memoQ editor focus to a `previewPartId`.
-- `memoq_stage_translations` — stage translations (`draft` by default for multi-round Review Workbench inspection, or `approved` for immediate memoQ Pre-translate).
-- `memoq_list_staged` — inspect staged entries. `memoq_clear_staged` permanently deletes staged entries and their revision history. Pass `confirmed: true` after the user approves the document or all-document scope.
-- `memoq_open_review` — open the token-authenticated local Review & QA Workbench (with document switcher for single/all loaded documents, multi-round editing, comments, and batch approval).
-- `memoq_approve_staged` — approve final drafts (or revert to `draft`) before running memoQ Pre-translate.
-- `memoq_qa_document` — run deterministic QA, MQM scoring, and terminology checks on cached memoQ content and staged drafts. The default response contains the full QA summary and up to 25 issues. Use `nextIssueOffset` as `issueOffset` to continue with the same options, or set `includeSegments: true` when you need full segment snapshots.
-- `memoq_get_confirmed_translations` — read confirmed segments sent by memoQ `StoreTranslation`.
-- `memoq_get_recent_mt_requests` — inspect recent missed or inline-tag MT requests from memoQ.
-- `memoq_setup` — auto-discover memoQ paths & local DLL/ZIP assets (`action: "plan"`), fetch only the ~150 KB DLL slice via HTTP Range (with `.NET 4.8` Windows system-proxy fallback + SHA-256 verification) when no local package exists, present exact copy targets for user confirmation, install via verified helper (`action: "install", confirmed: true`), and return first-time memoQ MT resource setup instructions (`Resource Console → MT settings → Create new` + `Project home → Settings → MT settings`) or open the local visual setup wizard (`http://127.0.0.1:<port>/setup?token=...`).
+```powershell
+pnpm build:memoq-helper
+```
 
-## First-Time memoQ Setup
+## Security & License
 
-1. Ask your agent to run `memoq_setup` (it finds memoQ and fetches/verifies `MemoQ.AI.Hub.Plugin.dll` into `Addins` + enables `<LoadUnsignedPlugins>` after confirmation).
-2. Restart **memoQ Desktop**.
-3. Open **Resource Console → MT settings → Create new** (`My Computer`), tick **memoQ AI Hub**, verify `Gateway Base URL` (`http://127.0.0.1:5271`), `Enable Gateway`, `BothFormattingAndTags`, and enable **Pre-translation / Match and Patch / Send best fuzzy TM match / Self-learning MT**.
-4. Enable the resource in **Options → Default resources → MT settings** and, for existing projects, **Project home → Settings → MT settings**.
+- Security details: [SECURITY.md](./SECURITY.md)
+- License: [MIT](./LICENSE)
