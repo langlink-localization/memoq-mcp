@@ -1,0 +1,21 @@
+{
+  "name": "memoq-mcp",
+  "private": true,
+  "version": "0.2.7",
+  "type": "module",
+  "packageManager": "pnpm@12.13.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc -p packages/l10n-core/tsconfig.json --noEmit && tsc -p packages/memoq-bridge/tsconfig.json --noEmit && tsc -p packages/memoq-mcp/tsconfig.json --noEmit",
+    "test": "node --test packages/memoq-bridge/test/*.test.ts packages/memoq-mcp/test/*.test.ts",
+    "build:memoq-helper": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-memoq-helper.ps1",
+    "package:memoq-mcp": "node scripts/package-memoq-mcp.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@langlink/memoq-mcp",
+  "version": "0.2.7",
+  "private": true,
+  "type": "module",
+  "main": "./src/server.ts",
+  "bin": {
+    "langlink-memoq-mcp": "./src/server.ts"
+  },
+  "exports": {
+    ".": "./src/server.ts"
+  },
+  "dependencies": {
+    "@langlink/memoq-bridge": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "description": "LangLink memoQ connector over stdio MCP for Codex, Claude Code, WorkBuddy, ZCode, and Trae: live Preview read/jump, staged translations, confirmed feedback, and local setup wizard.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/langlink-localization/memoq-mcp.git",
+    "directory": "packages/memoq-mcp"
+  }
+}

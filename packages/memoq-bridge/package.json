@@ -1,0 +1,22 @@
+{
+  "name": "@langlink/memoq-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@langlink/l10n-core": "workspace:*",
+    "fflate": "^0.8.3",
+    "zod": "^4.6.7"
+  },
+  "description": "Shared memoQ Desktop bridge: Preview bidirectional pipe client, MT staging/live gateway, daemon coordinator, and zero-panic DLL setup.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/langlink-localization/memoq-mcp.git",
+    "directory": "packages/memoq-bridge"
+  }
+}

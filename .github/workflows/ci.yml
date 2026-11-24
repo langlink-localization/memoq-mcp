@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.13.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm package:memoq-mcp
+      - name: Smoke test packaged tarball
+        shell: bash
+        run: |
+          TMP_DIR="$(mktemp -d)"
+          TGZ="$(ls packages/memoq-mcp/dist-package/*.tgz | head -n 1)"
+          npm install --prefix "$TMP_DIR" --no-save "$TGZ"
+          node packages/memoq-mcp/test/packaged-smoke.mjs "$TMP_DIR/node_modules/@langlink/memoq-mcp/dist/index.js"
