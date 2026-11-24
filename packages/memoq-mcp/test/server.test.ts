@@ -36,6 +36,32 @@ test("BridgeHttpClient forwards AbortSignal to fetch", async (t) => {
   assert.equal(receivedSignal?.aborted, true);
 });
 
+test("listStaged paging works when the MCP server shares a legacy bridge", async (t) => {
+  const allItems = [{ id: "e1" }, { id: "e2" }, { id: "e3" }];
+  const requestedLimits: number[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    const parsed = new URL(url);
+    const limit = Number(parsed.searchParams.get("limit") ?? "100");
+    requestedLimits.push(limit);
+    return Response.json({
+      total: allItems.length,
+      counts: { approved: 0, draft: 3, needsRevision: 0 },
+      items: allItems.slice(0, limit),
+    });
+  });
+  const bridge = new BridgeHttpClient("http://127.0.0.1", "test-token");
+  const first = await bridge.listStaged({ offset: 0, limit: 1 });
+  assert.equal(first.items[0]?.id, "e1");
+  assert.equal(first.nextOffset, 1);
+  const second = await bridge.listStaged({ offset: 1, limit: 1 });
+  assert.equal(second.items[0]?.id, "e2");
+  assert.equal(second.nextOffset, 2);
+  const third = await bridge.listStaged({ offset: 2, limit: 1 });
+  assert.equal(third.items[0]?.id, "e3");
+  assert.equal(third.nextOffset, null);
+  assert.deepEqual(requestedLimits, [1, 1, 2, 1, 3]);
+});
+
 test("QA paging works when the MCP server shares a legacy DSH bridge", async (t) => {
   const issueIds = ["first", "second", "third"];
   const requestedLimits: number[] = [];

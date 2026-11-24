@@ -29,17 +29,15 @@ codex mcp add memoq -- npx -y @langlink/memoq-mcp
 claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mcp
 ```
 
-### 其他 MCP 客户端
+### WorkBuddy
 
-自动输出或写入配置：
+一键写入 `~/.workbuddy/mcp.json`（自动保留已有 MCP 配置并生成备份）：
 
 ```bash
-npx -y @langlink/memoq-mcp config --client codex
-npx -y @langlink/memoq-mcp config --client claude
 npx -y @langlink/memoq-mcp config --client workbuddy --write
 ```
 
-或手动添加到客户端的 `mcp.json`：
+或手动在 `~/.workbuddy/mcp.json` 中添加如下配置后重启 WorkBuddy：
 
 ```json
 {
@@ -50,6 +48,19 @@ npx -y @langlink/memoq-mcp config --client workbuddy --write
     }
   }
 }
+```
+
+> WorkBuddy 内置独立子进程回收机制，本工具已自动使用独立后台守护进程（detached daemon），会话结束后本地审校工作台链接仍可正常打开和刷新。
+
+### 其他 MCP 客户端（Cursor / ZCode / Trae）
+
+自动输出或写入配置：
+
+```bash
+npx -y @langlink/memoq-mcp config --client codex
+npx -y @langlink/memoq-mcp config --client claude
+npx -y @langlink/memoq-mcp config --client workbuddy --write
+npx -y @langlink/memoq-mcp config --client all
 ```
 
 ## 首次配置 memoQ MT 插件（仅 Pre-translate 写入需要）

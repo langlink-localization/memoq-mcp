@@ -316,7 +316,21 @@ export class BridgeHttpClient {
     }
     // Compatibility fallback when sharing a legacy running bridge that ignores `offset`.
     const effectiveLimit = limit ?? 100;
-    const items = offset > 0 ? res.items.slice(offset, offset + effectiveLimit) : res.items.slice(0, effectiveLimit);
+    const end = Math.min(offset + effectiveLimit, res.total);
+    let sourceItems = res.items;
+    if (offset < end && sourceItems.length < end) {
+      const refillParams = new URLSearchParams(params);
+      refillParams.delete("offset");
+      refillParams.set("limit", String(end));
+      const refilled = await this.request<StagedPage>(
+        "GET",
+        `${CONTROL_ROUTES.stagingList}?${refillParams.toString()}`,
+        undefined,
+        signal,
+      );
+      sourceItems = refilled.items;
+    }
+    const items = sourceItems.slice(offset, end);
     const next = offset + items.length;
     return {
       total: res.total,

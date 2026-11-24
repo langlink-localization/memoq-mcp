@@ -29,17 +29,15 @@ codex mcp add memoq -- npx -y @langlink/memoq-mcp
 claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mcp
 ```
 
-### Other MCP Clients
+### WorkBuddy
 
-Generate or write configuration automatically:
+Write the MCP entry directly into `~/.workbuddy/mcp.json` (preserves existing servers and creates a backup):
 
 ```bash
-npx -y @langlink/memoq-mcp config --client codex
-npx -y @langlink/memoq-mcp config --client claude
-npx -y @langlink/memoq-mcp config --client all
+npx -y @langlink/memoq-mcp config --client workbuddy --write
 ```
 
-Or add to your client's `mcp.json`:
+Or add manually in `~/.workbuddy/mcp.json`, then restart WorkBuddy:
 
 ```json
 {
@@ -50,6 +48,17 @@ Or add to your client's `mcp.json`:
     }
   }
 }
+```
+
+### Other MCP Clients (Cursor / ZCode / Trae)
+
+Generate or write configuration automatically:
+
+```bash
+npx -y @langlink/memoq-mcp config --client codex
+npx -y @langlink/memoq-mcp config --client claude
+npx -y @langlink/memoq-mcp config --client workbuddy --write
+npx -y @langlink/memoq-mcp config --client all
 ```
 
 ## First-Time memoQ Setup (Optional for Preview, Required for Pre-translate)
