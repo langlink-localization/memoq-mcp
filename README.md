@@ -31,13 +31,9 @@ claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mc
 
 ### WorkBuddy
 
-Write the MCP entry directly into `~/.workbuddy/mcp.json` (preserves existing servers and creates a backup):
-
-```bash
-npx -y @langlink/memoq-mcp config --client workbuddy --write
-```
-
-Or add manually in `~/.workbuddy/mcp.json`, then restart WorkBuddy:
+1. On the Windows desktop running memoQ, open **Connectors → Custom connectors → Configure MCP** in WorkBuddy.
+2. Merge `memoq` into the displayed `mcpServers` object and save. For an upgrade, update its `command` and `args`, keeping its `env`, other settings, and other connectors.
+3. Enable `memoq` and verify that it appears without a red failure status. Open a memoQ document in Preview. In a new local WorkBuddy session, ask it to call `memoq_status` and confirm the Preview connection and active document.
 
 ```json
 {
@@ -50,6 +46,14 @@ Or add manually in `~/.workbuddy/mcp.json`, then restart WorkBuddy:
 }
 ```
 
+The CLI also accepts the exact file path shown by **Configure MCP**.
+
+```bash
+npx -y @langlink/memoq-mcp config --client workbuddy --config-path "<path shown by WorkBuddy>" --write
+```
+
+Without `--config-path`, it writes only when it can identify the active config file. Otherwise it prints the entry to paste in WorkBuddy. If the list stays empty, check that the displayed file contains `memoq` under `mcpServers`. If the entry shows **Connection closed**, use **Copy log** on that entry and check the first startup error for Node, `npx`, npm download, or MCP initialization. WorkBuddy's diagnostics can check conversation network errors separately.
+
 ### Other MCP Clients (Cursor / ZCode / Trae)
 
 Generate or write configuration automatically:
@@ -57,7 +61,6 @@ Generate or write configuration automatically:
 ```bash
 npx -y @langlink/memoq-mcp config --client codex
 npx -y @langlink/memoq-mcp config --client claude
-npx -y @langlink/memoq-mcp config --client workbuddy --write
 npx -y @langlink/memoq-mcp config --client all
 ```
 

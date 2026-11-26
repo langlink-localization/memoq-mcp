@@ -31,13 +31,9 @@ claude mcp add --scope user --transport stdio memoq -- npx -y @langlink/memoq-mc
 
 ### WorkBuddy
 
-一键写入 `~/.workbuddy/mcp.json`（自动保留已有 MCP 配置并生成备份）：
-
-```bash
-npx -y @langlink/memoq-mcp config --client workbuddy --write
-```
-
-或手动在 `~/.workbuddy/mcp.json` 中添加如下配置后重启 WorkBuddy：
+1. 在运行 memoQ 的 Windows 电脑上打开 WorkBuddy「连接器 → 自定义连接器 → 配置 MCP」。
+2. 将下方的 `memoq` 条目合并到界面显示的 `mcpServers` 中并保存。已有 `memoq` 时，只更新 `command` 和 `args`，保留 `env`、其他设置和其他连接器。
+3. 启用 `memoq` 并确认没有红色失败状态。在 memoQ 打开文档和 Preview，然后在 WorkBuddy 的新本地会话里调用 `memoq_status`，确认 Preview 已连接且活动文档正确。
 
 ```json
 {
@@ -50,6 +46,14 @@ npx -y @langlink/memoq-mcp config --client workbuddy --write
 }
 ```
 
+也可以用「配置 MCP」显示的实际路径自动写入。
+
+```bash
+npx -y @langlink/memoq-mcp config --client workbuddy --config-path "<配置 MCP 显示的路径>" --write
+```
+
+省略路径时，安装器只在能明确识别现有配置时写入，否则会打印配置供粘贴。列表为空时，先确认界面显示的文件里有 `mcpServers.memoq`。显示「连接已关闭」时，点该连接器的「复制日志」，根据首条启动错误检查 Node.js、`npx`、npm 下载或 MCP 握手。对话本身报网络错误时，可用 WorkBuddy 的诊断工具单独检查。
+
 > WorkBuddy 内置独立子进程回收机制，本工具已自动使用独立后台守护进程（detached daemon），会话结束后本地审校工作台链接仍可正常打开和刷新。
 
 ### 其他 MCP 客户端（Cursor / ZCode / Trae）
@@ -59,7 +63,6 @@ npx -y @langlink/memoq-mcp config --client workbuddy --write
 ```bash
 npx -y @langlink/memoq-mcp config --client codex
 npx -y @langlink/memoq-mcp config --client claude
-npx -y @langlink/memoq-mcp config --client workbuddy --write
 npx -y @langlink/memoq-mcp config --client all
 ```
 
