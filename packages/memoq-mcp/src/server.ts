@@ -113,13 +113,18 @@ async function runConfigCommand(args: string[]): Promise<void> {
   if (clients.length === 0) {
     throw new Error(`--client must be one of ${MCP_CLIENTS.join(", ")}, all`);
   }
+  const configPathIndex = args.indexOf("--config-path");
+  const configPath = configPathIndex >= 0 ? args[configPathIndex + 1] : undefined;
+  if (configPathIndex >= 0 && (requested !== "workbuddy" || !configPath || configPath.startsWith("--"))) {
+    throw new Error("--config-path <file> requires --client workbuddy and the path shown by Configure MCP.");
+  }
   const pinnedIndex = args.indexOf("--pinned");
   const pinnedVersion = pinnedIndex >= 0 ? args[pinnedIndex + 1] : undefined;
   const updateMode: UpdateMode = pinnedIndex >= 0 ? "pinned" : "latest";
   if (updateMode === "pinned" && !pinnedVersion) {
     throw new Error("--pinned requires an exact version, e.g. --pinned 0.1.0");
   }
-  const recipes = clients.map((client) => clientRecipe(client, home, updateMode, pinnedVersion));
+  const recipes = clients.map((client) => clientRecipe(client, home, updateMode, pinnedVersion, configPath));
   if (write) {
     const results = [];
     for (const recipe of recipes) results.push(await writeRecipe(recipe));
@@ -128,6 +133,11 @@ async function runConfigCommand(args: string[]): Promise<void> {
     } else {
       for (const result of results) {
         console.log(`${result.client}: ${result.action}${result.path ? ` ${result.path}` : ""}${result.backup ? ` (backup ${result.backup})` : ""}`);
+      }
+      const workbuddy = recipes.find((recipe) => recipe.client === "workbuddy");
+      if (workbuddy) {
+        for (const note of workbuddy.notes) console.log(note);
+        if (!workbuddy.path) console.log(workbuddy.content);
       }
     }
     return;
@@ -162,6 +172,7 @@ async function main(): Promise<void> {
   }
   if (command === "--help" || command === "-h") {
     console.log(`Usage: langlink-memoq-mcp [config [--client all|${MCP_CLIENTS.join("|")}] [--write] [--pinned <ver>] [--json]]`);
+    console.log("  WorkBuddy: config --client workbuddy [--config-path <file>] [--write]");
     return;
   }
   const server = createMemoqMcpServer();

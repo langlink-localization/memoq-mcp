@@ -1,6 +1,8 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export const MCP_CLIENTS = ["codex", "claude", "workbuddy", "zcode", "trae", "agents"] as const;
 export type McpClient = typeof MCP_CLIENTS[number];
@@ -47,11 +49,20 @@ function json(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function workbuddyConfigPath(home: string): string | null {
+  const currentDir = join(home, ".workbuddy-ai");
+  const current = join(currentDir, "mcp.json");
+  const legacy = join(home, ".workbuddy", "mcp.json");
+  if (existsSync(legacy)) return existsSync(currentDir) ? null : legacy;
+  return existsSync(current) ? current : null;
+}
+
 export function clientRecipe(
   client: McpClient,
   home = homedir(),
   updateMode: UpdateMode = "latest",
   version?: string,
+  configPath?: string,
 ): ClientRecipe {
   const withUpdate = { updateMode };
   switch (client) {
@@ -91,10 +102,15 @@ tool_timeout_sec = 120
       return {
         ...withUpdate,
         client,
-        path: join(home, ".workbuddy/mcp.json"),
+        path: configPath ? resolve(configPath) : workbuddyConfigPath(home),
         format: "json",
         content: json({ mcpServers: { [SERVER_NAME]: stdio(updateMode, version, true) } }),
-        notes: ["WorkBuddy also exposes MCP configuration in its Connectors UI.", updateNote(updateMode)],
+        notes: [
+          "Use the path shown in WorkBuddy → Custom connectors → Configure MCP.",
+          "If the path is different or not detected, merge the entry in WorkBuddy or pass --config-path with the displayed path.",
+          "Enable the connector in WorkBuddy and call memoq_status in a new local session. If it fails to start, use Copy log on the connector.",
+          updateNote(updateMode),
+        ],
       };
     case "zcode":
       return {
@@ -157,43 +173,81 @@ function objectAt(value: unknown, key: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-async function mergeJson(recipe: ClientRecipe, target: string): Promise<WriteResult> {
-  let existing: Record<string, unknown> = {};
-  let exists = false;
+async function readConfig(target: string): Promise<string | undefined> {
   try {
-    existing = objectAt(JSON.parse(await readFile(target, "utf8")), target);
-    exists = true;
+    return await readFile(target, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  if (exists) {
-    const backup = `${target}.bak.${Date.now()}`;
-    await copyFile(target, backup);
-    if (recipe.client === "zcode" || recipe.client === "workbuddy" || recipe.client === "agents") {
-      const path = recipe.client === "zcode" ? ["mcp", "servers"] : ["mcpServers"];
-      let node = existing;
-      for (const key of path.slice(0, -1)) {
-        node = objectAt((node[key] ??= {}), key);
+}
+
+function parseConfig(content: string, target: string): Record<string, unknown> {
+  try {
+    return objectAt(JSON.parse(content.replace(/^\uFEFF/u, "")), target);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new Error(`Invalid JSON in ${target}. Open the MCP editor to repair the config before retrying.`);
+  }
+}
+
+async function mergeJson(recipe: ClientRecipe, target: string): Promise<WriteResult> {
+  await mkdir(dirname(target), { recursive: true });
+  const lock = `${target}.langlink-config.lock`;
+  try {
+    await mkdir(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    throw new Error(`Another LangLink config write is in progress. Retry in a moment. After an interrupted install, confirm it stopped before removing the empty lock directory: ${lock}`);
+  }
+
+  let staged: string | undefined;
+  try {
+    const original = await readConfig(target);
+    const existing = original === undefined ? {} : parseConfig(original, target);
+    const next = objectAt(JSON.parse(recipe.content), recipe.client);
+    const zcode = recipe.client === "zcode";
+    const parent = zcode ? objectAt((existing.mcp ??= {}), "mcp") : existing;
+    const key = zcode ? "servers" : "mcpServers";
+    const servers = objectAt((parent[key] ??= {}), key);
+    const nextParent = zcode ? objectAt(next.mcp, "mcp") : next;
+    const candidate = objectAt(objectAt(nextParent[key], key)[SERVER_NAME], SERVER_NAME);
+    const originalEntry = servers[SERVER_NAME];
+    if (originalEntry === undefined) {
+      servers[SERVER_NAME] = candidate;
+    } else {
+      const current = objectAt(originalEntry, SERVER_NAME);
+      if (current.url !== undefined || (current.type !== undefined && current.type !== "stdio")) {
+        throw new Error(`The ${SERVER_NAME} entry is not a local stdio connector. Review it in the MCP editor before replacing it.`);
       }
-      const servers = objectAt((node[path[path.length - 1]!] ??= {}), path[path.length - 1]!);
-      const next = objectAt(JSON.parse(recipe.content), recipe.client);
-      const nextServers =
-        recipe.client === "zcode"
-          ? objectAt(objectAt(next.mcp, "mcp").servers, "servers")
-          : objectAt(next.mcpServers, "mcpServers");
-      const candidate = nextServers[SERVER_NAME];
-      if (JSON.stringify(servers[SERVER_NAME]) === JSON.stringify(candidate)) {
+      if (current.command === candidate.command && JSON.stringify(current.args) === JSON.stringify(candidate.args)) {
         return { client: recipe.client, path: target, action: "unchanged" };
       }
-      servers[SERVER_NAME] = candidate;
-      await writeFile(target, json(existing), "utf8");
-      return { client: recipe.client, path: target, action: "merged", backup };
+      servers[SERVER_NAME] = { ...current, command: candidate.command, args: candidate.args };
     }
-    throw new Error(`refusing to rewrite existing non-JSON config: ${target}`);
+
+    const suffix = `${Date.now()}.${randomUUID()}`;
+    const mode = original === undefined ? 0o600 : (await stat(target)).mode & 0o777;
+    staged = `${target}.tmp.${suffix}`;
+    await writeFile(staged, json(existing), { mode, flag: "wx" });
+    if (await readConfig(target) !== original) {
+      throw new Error(`Configuration changed while saving. Reopen it and retry: ${target}`);
+    }
+    let backup: string | undefined;
+    if (original !== undefined) {
+      backup = `${target}.bak.${suffix}`;
+      await writeFile(backup, original, { mode: 0o600, flag: "wx" });
+    }
+    await rename(staged, target);
+    return backup === undefined
+      ? { client: recipe.client, path: target, action: "created" }
+      : { client: recipe.client, path: target, action: "merged", backup };
+  } finally {
+    try {
+      if (staged !== undefined) await rm(staged, { force: true });
+    } finally {
+      await rmdir(lock);
+    }
   }
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, recipe.content, "utf8");
-  return { client: recipe.client, path: target, action: "created" };
 }
 
 export async function writeRecipe(recipe: ClientRecipe): Promise<WriteResult> {
