@@ -230,6 +230,7 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
       },
     });
     assert.equal(ambiguousEdit.isError, undefined);
+    assert.ok(Array.isArray(ambiguousEdit.content));
     assert.deepEqual(ambiguousEdit.structuredContent, JSON.parse(ambiguousEdit.content[0].text));
     assert.equal(ambiguousEdit.structuredContent?.results[0].status, "not_attempted");
 
