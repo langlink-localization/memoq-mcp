@@ -1,3 +1,4 @@
+import { createDesktopWriter, type DesktopEditBatch, type EditResult } from "./desktop-edits.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
@@ -9,6 +10,7 @@ export interface PreviewPart {
   sourceText: string;
   targetText: string;
   order: number;
+  contentRevision?: number;
   sourceFocusedRange?: FocusedRange | null;
   targetFocusedRange?: FocusedRange | null;
 }
@@ -45,6 +47,7 @@ export interface PreviewStatus {
   activeTargetLanguage: string;
   activePreviewPartIds: string[];
   cachedDocuments: number;
+  desktopEditing?: { state: string; reason: string };
 }
 
 export interface ActiveSegmentResult {
@@ -130,6 +133,7 @@ export interface CachedPreviewDocumentSummary {
 }
 
 export interface PreviewClient {
+  applyEdits?(batch: DesktopEditBatch, signal: AbortSignal): Promise<{ results: EditResult[] }>;
   start(): Promise<void>;
   stop(): Promise<void>;
   getStatus(): PreviewStatus;
@@ -268,10 +272,12 @@ function normalizeFocusedRange(raw: unknown): FocusedRange | null {
   };
 }
 
+interface HelperAck { ok: boolean; error?: string; actualTarget?: string }
+
 export function createPreviewClient(options: PreviewClientOptions = {}): PreviewClient {
   const platform = options.platform ?? process.platform;
   const documents = new Map<string, PreviewDocumentState>();
-  const pendingAcks = new Map<string, { resolve: (res: { ok: boolean; error?: string }) => void; timer: NodeJS.Timeout }>();
+  const pendingAcks = new Map<string, { resolve: (res: HelperAck) => void; timer: NodeJS.Timeout }>();
 
   let child: PreviewSubprocessHandle | null = null;
   let running = false;
@@ -363,6 +369,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
         const errorText = typeof event.error === "string" && event.error ? event.error : undefined;
         pending.resolve({
           ok: event.ok === true,
+          ...(typeof event.actualTarget === "string" ? { actualTarget: event.actualTarget } : {}),
           ...(errorText === undefined ? {} : { error: errorText }),
         });
       }
@@ -427,6 +434,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
           sourceText: String(p.sourceText ?? ""),
           targetText: String(p.targetText ?? ""),
           order,
+          contentRevision: revision + 1,
           ...(existing?.sourceFocusedRange === undefined ? {} : { sourceFocusedRange: existing.sourceFocusedRange }),
           ...(existing?.targetFocusedRange === undefined ? {} : { targetFocusedRange: existing.targetFocusedRange }),
         });
@@ -474,8 +482,8 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
         nextActiveIds.push(previewPartId);
 
         const existing = doc.parts.get(previewPartId);
-        const sourceText = String(p.sourceText ?? "") || existing?.sourceText || "";
-        const targetText = String(p.targetText ?? "") || existing?.targetText || "";
+        const sourceText = String(p.sourceText ?? existing?.sourceText ?? "");
+        const targetText = String(p.targetText ?? existing?.targetText ?? "");
         const sourceFocusedRange = normalizeFocusedRange(p.sourceFocusedRange) ?? existing?.sourceFocusedRange ?? null;
         const targetFocusedRange = normalizeFocusedRange(p.targetFocusedRange) ?? existing?.targetFocusedRange ?? null;
         const order = existing?.order ?? doc.parts.size;
@@ -485,6 +493,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
           sourceText,
           targetText,
           order,
+          ...(existing?.contentRevision === undefined ? {} : { contentRevision: existing.contentRevision }),
           sourceFocusedRange,
           targetFocusedRange,
         });
@@ -504,7 +513,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
     }
   }
 
-  function sendCommand(payload: Record<string, unknown>, timeoutMs = 4000): Promise<{ ok: boolean; error?: string }> {
+  function sendCommand(payload: Record<string, unknown>, timeoutMs = 4000): Promise<HelperAck> {
     if (!child || !running) {
       return Promise.resolve({ ok: false, error: "Preview helper process is not running." });
     }
@@ -668,6 +677,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
       activeTargetLanguage: activeDoc?.targetLanguage ?? "",
       activePreviewPartIds: activeDoc?.activePreviewPartIds ?? [],
       cachedDocuments: documents.size,
+      desktopEditing: { state: connected ? "probe_on_edit" : "unavailable", reason: connected ? "Control and range checked per edit" : state },
     };
   }
 
@@ -934,6 +944,88 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
     });
   }
 
+  async function freshPart(doc: PreviewDocumentState, id: string, signal: AbortSignal) {
+    const previous = doc.parts.get(id)?.contentRevision ?? 0;
+    if (signal.aborted) return undefined;
+    const ack = await sendCommand({ type: "read_part", previewPartId: id });
+    if (!ack.ok) return undefined;
+    const deadline = Date.now() + 1800;
+    do {
+      const part = doc.parts.get(id);
+      if ((part?.contentRevision ?? 0) > previous) return part;
+      await new Promise(resolve => setTimeout(resolve, 40));
+    } while (connected && !signal.aborted && Date.now() < deadline);
+    return undefined;
+  }
+
+  const applyEdits = createDesktopWriter(async (documentId, edit, plan, signal) => {
+    const id = edit.previewPartId;
+    const blocked = (reason: string): EditResult => ({ previewPartId: id, status: "blocked", reason });
+    const doc = documents.get(activeDocumentKey);
+    if (!connected || !doc || doc.documentId !== documentId || !doc.parts.has(id)) return blocked("Open the requested document and connect Preview.");
+    const first = await freshPart(doc, id, signal);
+    if (!first) return blocked("No fresh content for this part. Re-read the document and its current part IDs.");
+    const actualTarget = first.targetText;
+    if (first.sourceText !== edit.expectedSource || (actualTarget !== edit.expectedTarget && actualTarget !== plan.final)) {
+      return { previewPartId: id, status: "conflict", actualSource: first.sourceText, actualTarget };
+    }
+
+    const row = orderedPartsForDoc(doc).findIndex(p => p.previewPartId === id) + 1;
+    let target = actualTarget;
+    let mutated = false;
+    for (const span of plan.spans) {
+      const stop = (reason: string): EditResult => ({ previewPartId: id, status: mutated ? "unverified" : "blocked", reason });
+      if (signal.aborted || !connected || documents.get(activeDocumentKey) !== doc) return stop("Document changed or request cancelled.");
+      const focus = await focusSegment({ documentId, previewPartId: id });
+      if (!focus.ok) return stop(focus.error ?? "Preview focus refused");
+      if (!row || signal.aborted) return stop("Unable to resolve the current row.");
+      const activation = await sendCommand({ type: "activate_editor", documentId, previewPartId: id, row }, 5000);
+      if (!activation.ok) return stop(activation.error ?? "Could not activate the target editor.");
+      const deadline = Date.now() + 1800;
+      while (doc.activePreviewPartIds[0] !== id && !signal.aborted && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      const active = await getActiveSegment({ contextBefore: 0, contextAfter: 0, settleMs: 0 });
+      const fail = (reason: string): EditResult => ({
+        previewPartId: id, status: mutated ? "unverified" : "blocked", reason,
+        ...(active.segment?.previewPartId === id ? { actualTarget: active.segment.targetText } : {}),
+      });
+      if (!connected || signal.aborted || !active.mappingCertain || active.activePreviewPartIds.length !== 1 ||
+          active.document?.documentId !== documentId || active.segment?.previewPartId !== id ||
+          active.segment.sourceText !== edit.expectedSource || active.segment.targetText !== target) {
+        return fail("Active segment or target changed. Re-read the open document before retrying.");
+      }
+      if (actualTarget === plan.final) {
+        const checked = await sendCommand({ type: "inspect_target", documentId, previewPartId: id, row, mayBeEmpty: !actualTarget }, 6000);
+        if (!checked.ok || checked.actualTarget === undefined) return stop(checked.error ?? "Native target unavailable.");
+        return { previewPartId: id, status: checked.actualTarget === plan.final ? "already_applied" : "conflict", actualTarget: checked.actualTarget };
+      }
+      if (span.oldText === span.newText) continue;
+      const operationId = randomUUID();
+      const cancel = () => { void sendCommand({ type: "cancel_edit", operationId }); };
+      signal.addEventListener("abort", cancel, { once: true });
+      const ack = await sendCommand({ type: "replace_text", operationId, documentId, previewPartId: id, row,
+        expectedSource: edit.expectedSource, expectedTarget: target, oldText: span.oldText, newText: span.newText, start: span.start,
+        expiresAt: Date.now() + 85_000,
+      }, 90_000).finally(() => signal.removeEventListener("abort", cancel));
+      if (!ack.ok) {
+        const reason = ack.error ?? "No native acknowledgement";
+        if (reason.startsWith("blocked:")) return fail(reason);
+        // The native control may have an uncommitted partial edit. A Preview snapshot
+        // can still contain the prior persisted value, so do not label that value as actual.
+        return { previewPartId: id, status: "unverified", reason };
+      }
+      mutated = true;
+      target = target.slice(0, span.start) + span.newText + target.slice(span.start + span.oldText.length);
+      const observed = await freshPart(doc, id, signal);
+      if (observed?.targetText !== target) {
+        return { previewPartId: id, status: "unverified", reason: "Post-edit content did not verify. Inspect before retrying.",
+          ...(observed ? { actualTarget: observed.targetText } : {}) };
+      }
+    }
+    return { previewPartId: id, status: "applied", actualTarget: target };
+  });
+
   function getContextForMt(query: {
     documentId?: string;
     sourceLanguage?: string;
@@ -981,6 +1073,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
     getActiveSegment,
     getDocumentSegments,
     focusSegment,
+    applyEdits,
     getContextForMt,
     ingestEventForTest: handleHelperEvent,
   };

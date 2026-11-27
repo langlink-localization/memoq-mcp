@@ -1,3 +1,4 @@
+import type { DesktopEditBatch, EditResult } from "./desktop-edits.ts";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -190,13 +191,17 @@ export class BridgeHttpClient {
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: combineTimeoutSignal(10_000, signal),
+      signal: path === CONTROL_ROUTES.desktopEdits ? (signal ?? null) : combineTimeoutSignal(10_000, signal),
     });
     const text = await response.text();
     const parsed = text ? (JSON.parse(text) as unknown) : {};
     if (!response.ok) {
-      const errObj = parsed as { error?: string };
-      throw new Error(errObj?.error ?? `Bridge control request failed (${response.status})`);
+      const error = (parsed as { error?: string | { message?: string } }).error;
+      const message = typeof error === "string" ? error : error?.message;
+      if (path === CONTROL_ROUTES.desktopEdits && response.status === 404) {
+        throw new Error("The connected bridge does not expose desktop edits. Reconnect to a bridge providing memoq_apply_edits.");
+      }
+      throw new Error(message ?? `Bridge control request failed (${response.status})`);
     }
     return parsed as T;
   }
@@ -260,6 +265,10 @@ export class BridgeHttpClient {
     signal?: AbortSignal,
   ) {
     return this.request<{ ok: boolean; error?: string }>("POST", CONTROL_ROUTES.previewFocus, params, signal);
+  }
+
+  applyEdits(batch: DesktopEditBatch, signal?: AbortSignal) {
+    return this.request<{ results: EditResult[] }>("POST", CONTROL_ROUTES.desktopEdits, batch, signal);
   }
 
   stageTranslations(items: StageTranslationInput[], signal?: AbortSignal) {

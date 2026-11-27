@@ -76,7 +76,7 @@ Preview 读取、跳转与普通 QA 无需安装插件即可直接使用。如�
 4. 在 memoQ 中打开 **Resource Console → MT settings → Create new**（`My Computer`），勾选 **memoQ AI Hub**，确认 `Gateway Base URL` 为 `http://127.0.0.1:5271`，勾选 **Pre-translation / Match and Patch / Send best fuzzy TM match / Self-learning MT**。
 5. 在 **Options → Default resources → MT settings** 及现有项目的 **Project home → Settings → MT settings** 中启用该资源。
 
-## 工具列表（14）
+## 工具列表（15）
 
 | 工具名 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -85,6 +85,7 @@ Preview 读取、跳转与普通 QA 无需安装插件即可直接使用。如�
 | `memoq_get_active_segment` | 只读 | 读取当前聚焦句段、前后上下文、选中范围及 `mappingCertain`。 |
 | `memoq_get_document_segments` | 只读 | 分页读取（`offset` / `nextOffset`）缓存句段，支持未译筛选与搜索。 |
 | `memoq_focus_segment` | 写入 | 将 memoQ 编辑器高亮跳转至指定 `previewPartId`。 |
+| `memoq_apply_edits` | 写入 | 在打开的译文中应用已审核的局部修改，核对句段身份、旧值及回读结果。 |
 | `memoq_stage_translations` | 写入 | 批量暂存 1–200 条草稿译文，支持内联标签保护。 |
 | `memoq_list_staged` | 只读 | 分页查看（`offset` / `nextOffset`）暂存译文、状态与审校批注。 |
 | `memoq_open_review` | 只读 | 获取本地双语审校与 QA 工作台链接。 |

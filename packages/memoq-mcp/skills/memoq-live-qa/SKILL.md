@@ -20,3 +20,7 @@ whenToUse: The user asks to check, proofread, polish, QA, or inspect the active 
    - **引导用户自设放行标准**：本工具不内置自动 AI 放行裁决；如用户需要质量门禁，可引导其自行约定放行标准（例如：Critical/标签/占位符错误数为 0、术语表零漏用、特定 `customRules` 全通过、MQM 分数目标或人工在审校工作台逐条确认）。
    - **注意**：Preview 通道默认传递 `Minimal` 纯文本，不包含 memoQ 专有内联标签（inline tags）；如需处理带标签句段的回填，请结合 `memoq_get_recent_mt_requests` 获取完整 HTML 标签。
 4. 若某句需要用户在 memoQ 中定位复核，调用 `memoq_focus_segment` 传入该句的 `previewPartId`，让 memoQ 编辑器直接跳转高亮到对应句段。
+5. 用户要求直接应用修改时，使用 `memoq_apply_edits`。每次限定一个 `documentId`，每条携带 `previewPartId`、完整的 `expectedSource`、`expectedTarget` 和唯一匹配的 `oldText` / `newText`。同一短语重复出现时，扩大上下文。专名调序由 Agent 按原译对应关系匹配。
+   - memoQ 保持前台，工具通过快速查找读取实际选区。局部文字修改应避开内联对象，单句删除显式传空 `newText`。
+   - `applied` 和 `already_applied` 可计入完成。`conflict` 需结合现有译文重新判断。`blocked` 按返回原因检查活动文档、焦点、选区或输入法，再重新定位。`unverified` 可能已部分写入，先检查当前编辑器并读回，按实际差异修复。`not_attempted` 可在前项解决后继续。
+   - 以实际探测结果判断能力。遇到不同版本或布局，优先复查控件及文档身份；只在目标和实际选区能够核实时提交修改。

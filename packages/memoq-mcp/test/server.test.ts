@@ -217,6 +217,22 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
   await client.connect(clientTransport);
 
   try {
+    const ambiguousEdit = await client.callTool({
+      name: "memoq_apply_edits",
+      arguments: {
+        documentId: "fixture",
+        edits: [{
+          previewPartId: "row",
+          expectedSource: "source",
+          expectedTarget: "AA",
+          replacements: [{ oldText: "A", newText: "B" }],
+        }],
+      },
+    });
+    assert.equal(ambiguousEdit.isError, undefined);
+    assert.deepEqual(ambiguousEdit.structuredContent, JSON.parse(ambiguousEdit.content[0].text));
+    assert.equal(ambiguousEdit.structuredContent?.results[0].status, "not_attempted");
+
     const listed = await client.listTools();
     assert.match(client.getInstructions() ?? "", /memoQ Desktop/u);
     assert.ok(listed.tools.every((tool) => tool.title && tool.annotations));
@@ -231,6 +247,7 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
     }
     const annotations = new Map(listed.tools.map((tool) => [tool.name, tool.annotations]));
     assert.equal(annotations.get("memoq_get_document_segments")?.readOnlyHint, true);
+    assert.equal(annotations.get("memoq_apply_edits")?.destructiveHint, true);
     assert.equal(annotations.get("memoq_focus_segment")?.readOnlyHint, false);
     assert.equal(annotations.get("memoq_focus_segment")?.idempotentHint, true);
     assert.equal(annotations.get("memoq_approve_staged")?.idempotentHint, true);
@@ -239,6 +256,7 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
     assert.equal(annotations.get("memoq_setup")?.openWorldHint, true);
     const names = listed.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "memoq_apply_edits",
       "memoq_approve_staged",
       "memoq_clear_staged",
       "memoq_focus_segment",

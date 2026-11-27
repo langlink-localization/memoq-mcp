@@ -26,6 +26,7 @@ export const CONTROL_ROUTES = {
   previewSegments: "/bridge/preview/segments",
   previewDocuments: "/bridge/preview/documents",
   previewRefresh: "/bridge/preview/refresh",
+  desktopEdits: "/bridge/preview/edits",
   previewFocus: "/bridge/preview/focus",
   stagingStage: "/bridge/staging/stage",
   stagingList: "/bridge/staging/list",
