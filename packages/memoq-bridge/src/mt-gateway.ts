@@ -1,3 +1,4 @@
+import { desktopEditSchema } from "./desktop-edits.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -1533,6 +1534,22 @@ export async function createMtGateway(options: MtGatewayOptions): Promise<MtGate
     if (method === "POST" && pathname === CONTROL_ROUTES.previewRefresh) {
       await options.previewClient?.refreshParts();
       sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && pathname === CONTROL_ROUTES.desktopEdits) {
+      const parsed = desktopEditSchema.safeParse(await readJsonBody(request));
+      if (!parsed.success) throw new BodyError(400, "INVALID_EDITS", parsed.error.message);
+      const controller = new AbortController();
+      response.once("close", () => controller.abort());
+      if (!options.previewClient?.applyEdits) {
+        sendJson(response, 200, { results: parsed.data.edits.map(({ previewPartId }) => ({
+          previewPartId, status: "blocked", reason: "desktop_writer_unavailable",
+        })) });
+        return;
+      }
+      const result = await options.previewClient.applyEdits(parsed.data, controller.signal);
+      if (!response.destroyed) sendJson(response, 200, result);
       return;
     }
 

@@ -1,3 +1,4 @@
+import { desktopEditSchema, editResultSchema } from "./desktop-edits.ts";
 import * as z from "zod/v4";
 import { defineSharedTool } from "@langlink/l10n-core/tool";
 import { type BridgeHttpClient, probeGatewayPort } from "./daemon.ts";
@@ -197,6 +198,18 @@ export function createMemoqTools(options: MemoqToolOptions) {
           signal,
         );
       },
+    ),
+
+    defineSharedTool(
+      "memoq_apply_edits",
+      {
+        title: "Apply reviewed edits in the open memoQ editor",
+        annotations: { ...WRITE_IDEMPOTENT_LOCAL, destructiveHint: true },
+        description: "Directly edit uniquely matched target substrings in a single open document. Read the document first. On conflict review the observed value; on unverified re-read before retrying. Does not confirm segments.",
+        inputSchema: desktopEditSchema.shape,
+        outputSchema: { results: z.array(editResultSchema) },
+      },
+      async (batch, signal) => (await resolveClient()).applyEdits(batch, signal),
     ),
 
     defineSharedTool(

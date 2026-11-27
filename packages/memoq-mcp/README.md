@@ -74,7 +74,7 @@ Preview reading, segment focus, and QA work immediately with no plugin required.
 4. In memoQ, open **Resource Console → MT settings → Create new** (`My Computer`), enable **memoQ AI Hub**, verify `Gateway Base URL` is `http://127.0.0.1:5271`, and enable **Pre-translation / Match and Patch / Send best fuzzy TM match / Self-learning MT**.
 5. Enable the resource in **Options → Default resources → MT settings** (and **Project home → Settings → MT settings** for existing projects).
 
-## Tools (14)
+## Tools (15)
 
 | Tool | Type | Description |
 | :--- | :--- | :--- |
@@ -83,6 +83,7 @@ Preview reading, segment focus, and QA work immediately with no plugin required.
 | `memoq_get_active_segment` | Read | Read the active segment, neighbor context, focused ranges, and `mappingCertain`. |
 | `memoq_get_document_segments` | Read | Paginated read (`offset` / `nextOffset`) of cached Preview segments with filters. |
 | `memoq_focus_segment` | Write | Jump memoQ editor selection to a specific `previewPartId`. |
+| `memoq_apply_edits` | Write | Apply reviewed text replacements in an open memoQ target. Checks the document, part, old text and observed result. |
 | `memoq_stage_translations` | Write | Stage 1–200 draft translations with inline tag protection. |
 | `memoq_list_staged` | Read | Paginated list (`offset` / `nextOffset`) of staged entries, statuses, and comments. |
 | `memoq_open_review` | Read | Get the local URL for the bilingual Review & QA Workbench. |

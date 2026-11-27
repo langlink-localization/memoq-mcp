@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const EXPECTED_TOOLS = [
+  "memoq_apply_edits",
   "memoq_approve_staged",
   "memoq_clear_staged",
   "memoq_focus_segment",
@@ -70,7 +71,7 @@ try {
   const docsJson = JSON.parse(docsResult.content[0].text);
   assert.equal(Array.isArray(docsJson.documents), true);
 
-  console.log("Installed memoQ MCP package lists all 14 tools and executes memoq_status/memoq_list_documents.");
+  console.log("Installed memoQ MCP package lists all 15 tools and executes memoq_status/memoq_list_documents.");
 } finally {
   await client.close();
   const daemonFile = join(tmpDir, "daemon.json");

@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -27,6 +29,8 @@ namespace LangLinkMemoQBridgeHelper
         private readonly Dictionary<string, PendingResponse> _pendingResponses = new Dictionary<string, PendingResponse>(StringComparer.OrdinalIgnoreCase);
 
         private volatile bool _stopping;
+        private volatile string _activePartKey;
+        private volatile string _cancelledOperation;
         private PipeTransport _activePipe;
 
         public PreviewPipeBridge(string toolIdOverride, string toolNameOverride)
@@ -76,6 +80,7 @@ namespace LangLinkMemoQBridgeHelper
 
         private void ConnectAndPump()
         {
+            _activePartKey = null;
             EmitStatus("connecting", connected: false, error: string.Empty);
 
             using (var pipe = new PipeTransport(PipeBaseName, _serializer))
@@ -112,45 +117,30 @@ namespace LangLinkMemoQBridgeHelper
                         throw new InvalidOperationException("memoQ preview negotiation failed.");
                     }
 
-                    var registrationResponse = SendCommandAndWait(
-                        pipe,
-                        "registration-request",
-                        new Dictionary<string, object>
-                        {
-                            ["PreviewToolId"] = _previewToolId.ToString(),
-                            ["PreviewToolName"] = _previewToolName,
-                            ["PreviewToolDescription"] = PreviewToolDescription,
-                            ["PreviewPartIdRegex"] = PreviewPartIdRegex,
-                            ["RequiresWebPreviewBaseUrl"] = false,
-                            ["ContentComplexity"] = PreviewContentComplexity,
-                            ["RequiredProperties"] = new string[0]
-                        },
-                        "registration-request",
-                        5000
-                    );
-
-                    if (!registrationResponse.Accepted)
+                    var existingConnection = SendCommandAndWait(pipe, "connection-request",
+                        new Dictionary<string, object> { ["PreviewToolId"] = _previewToolId.ToString() },
+                        "connection-request", 5000);
+                    if (!existingConnection.Accepted)
                     {
-                        if (!IsAlreadyConnectedError(registrationResponse.ErrorCode))
-                        {
-                            throw new InvalidOperationException(registrationResponse.ErrorMessage ?? "memoQ preview registration was refused.");
-                        }
-
-                        var connectResponse = SendCommandAndWait(
+                        var registrationResponse = SendCommandAndWait(
                             pipe,
-                            "connection-request",
+                            "registration-request",
                             new Dictionary<string, object>
                             {
-                                ["PreviewToolId"] = _previewToolId.ToString()
+                                ["PreviewToolId"] = _previewToolId.ToString(),
+                                ["PreviewToolName"] = _previewToolName,
+                                ["PreviewToolDescription"] = PreviewToolDescription,
+                                ["PreviewPartIdRegex"] = PreviewPartIdRegex,
+                                ["RequiresWebPreviewBaseUrl"] = false,
+                                ["ContentComplexity"] = PreviewContentComplexity,
+                                ["RequiredProperties"] = new string[0]
                             },
-                            "connection-request",
+                            "registration-request",
                             5000
                         );
 
-                        if (!connectResponse.Accepted)
-                        {
-                            throw new InvalidOperationException(connectResponse.ErrorMessage ?? "memoQ preview connection was refused.");
-                        }
+                        if (!registrationResponse.Accepted)
+                            throw new InvalidOperationException(registrationResponse.ErrorMessage ?? "memoQ refused registration.");
                     }
 
                     var runtimeSettingsResponse = SendCommandAndWait(
@@ -251,6 +241,58 @@ namespace LangLinkMemoQBridgeHelper
                 if (pipe == null)
                 {
                     EmitAck(id, ok: false, error: "memoQ preview pipe is not connected.");
+                    return;
+                }
+
+                if (type == "cancel_edit")
+                {
+                    _cancelledOperation = ReadString(command, "operationId");
+                    EmitAck(id, true, "");
+                    return;
+                }
+                if (type == "read_part")
+                {
+                    pipe.Send("content-update-request-from-preview-tool", new Dictionary<string, object>
+                    {
+                        ["PreviewToolId"] = _previewToolId.ToString(),
+                        ["PreviewPartIds"] = new[] { ReadString(command, "previewPartId") }
+                    });
+                    EmitAck(id, true, "");
+                    return;
+                }
+                if (type == "activate_editor")
+                {
+                    var key = ReadString(command, "documentId") + "/" + ReadString(command, "previewPartId");
+                    var result = DesktopEditor.WithEditor(pipe.ServerProcessId, () => DesktopEditor.Activate(Convert.ToInt32(command["row"]), _activePartKey != key));
+                    EmitAck(id, result == null, result);
+                    return;
+                }
+                if (type == "inspect_target")
+                {
+                    var key = ReadString(command, "documentId") + "/" + ReadString(command, "previewPartId");
+                    var actual = DesktopEditor.WithEditor(pipe.ServerProcessId, () => DesktopEditor.Inspect(Convert.ToInt32(command["row"]), Convert.ToBoolean(command["mayBeEmpty"]), () => _activePartKey == key));
+                    EmitJson(new Dictionary<string,object> { ["type"]="ack", ["id"]=id, ["ok"]=true, ["actualTarget"]=actual });
+                    return;
+                }
+                if (type == "replace_text")
+                {
+                    var key = ReadString(command, "documentId") + "/" + ReadString(command, "previewPartId");
+                    var operationId = ReadString(command, "operationId");
+                    var expiresAt = Convert.ToInt64(command["expiresAt"]);
+                    // Leave the stdin reader available for cancellation during an edit.
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        try
+                        {
+                            var result = DesktopEditor.WithEditor(pipe.ServerProcessId, () => DesktopEditor.Replace(
+                                Convert.ToInt32(command["row"]), ReadString(command, "expectedTarget"),
+                                ReadString(command, "oldText"), ReadString(command, "newText"),
+                                Convert.ToInt32(command["start"]), () => !_stopping && _activePartKey == key &&
+                                _cancelledOperation != operationId && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < expiresAt));
+                            EmitAck(id, result == null, result);
+                        }
+                        catch (Exception error) { EmitAck(id, false, error.Message); }
+                    });
                     return;
                 }
 
@@ -508,6 +550,7 @@ namespace LangLinkMemoQBridgeHelper
                     }
                 }
 
+                _activePartKey = mapped.Count == 1 ? mapped[0]["documentId"] + "/" + mapped[0]["previewPartId"] : null;
                 EmitJson(new Dictionary<string, object>
                 {
                     ["type"] = "highlight_change",
@@ -544,6 +587,8 @@ namespace LangLinkMemoQBridgeHelper
 
             if (includeRanges)
             {
+                if (!sourceContent.ContainsKey("Content")) mapped.Remove("sourceText");
+                if (!targetContent.ContainsKey("Content")) mapped.Remove("targetText");
                 mapped["sourceFocusedRange"] = ReadFocusedRange(part, "SourceFocusedRange");
                 mapped["targetFocusedRange"] = ReadFocusedRange(part, "TargetFocusedRange");
             }
@@ -751,6 +796,9 @@ namespace LangLinkMemoQBridgeHelper
         }
 
         public event EventHandler<PipeMessageEventArgs> MessageReceived;
+        public uint ServerProcessId { get; private set; }
+        [DllImport("kernel32.dll")]
+        private static extern bool GetNamedPipeServerProcessId(SafePipeHandle handle, out uint processId);
 
         public void Connect()
         {
@@ -763,6 +811,7 @@ namespace LangLinkMemoQBridgeHelper
 
             _stream.Connect(2000);
             _stream.ReadMode = PipeTransmissionMode.Message;
+            if (GetNamedPipeServerProcessId(_stream.SafePipeHandle, out var pid)) ServerProcessId = pid;
         }
 
         public void StartReading()

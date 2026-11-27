@@ -22,7 +22,7 @@ class MockHelperProcess extends EventEmitter implements PreviewSubprocessHandle 
         if (line) {
           const parsed = JSON.parse(line) as Record<string, unknown>;
           this.receivedCommands.push(parsed);
-          this.stdout.write(JSON.stringify({ type: "ack", id: parsed.id, ok: true }) + "\n");
+          this.stdout.write(JSON.stringify({ type: "ack", id: parsed.id, ok: true, ...(parsed.type === "inspect_target" ? { actualTarget: "Sun" } : {}) }) + "\n");
         }
         nl = buffer.indexOf("\n");
       }
@@ -103,6 +103,36 @@ test("preview-client handles JSONL events, mappingCertain, pagination, and focus
   assert.equal(focusCmd?.sourceContent, "Third sentence.");
 
   await client.stop();
+});
+
+test("desktop edits use fresh per-part readback, skip conflicts and never replay uncertain writes", async () => {
+  const proc = new MockHelperProcess();
+  const client = createPreviewClient({ platform: "win32", helperExecutablePath: "test.exe", spawner: () => proc });
+  const part = { documentId: "doc", sourceLanguage: "en", targetLanguage: "id", previewPartId: "p", sourceText: "Name", targetText: "Matahari" };
+  const edit = { previewPartId: "p", expectedSource: "Name", expectedTarget: "Matahari", replacements: [{ oldText: "Matahari", newText: "Sun" }] };
+  const batch = { documentId: "doc", edits: [edit] };
+  await client.start();
+  proc.emitEvent({ type: "status", state: "connected", connected: true });
+  proc.emitEvent({ type: "highlight_change", activeParts: [part] });
+  let applyInput = true;
+  proc.stdin.on("data", raw => {
+    const command = JSON.parse(raw.toString());
+    if (command.type === "read_part") proc.emitEvent({ type: "content_update", parts: [part] });
+    if (command.type === "replace_text" && applyInput) part.targetText = command.newText;
+  });
+  try {
+    const run = async () => (await client.applyEdits!(batch, new AbortController().signal)).results[0]!;
+    assert.equal((await run()).status, "applied");
+    assert.equal((await run()).status, "already_applied");
+    part.targetText = "manually changed";
+    assert.equal((await run()).status, "conflict");
+    assert.equal(proc.receivedCommands.filter(c => c.type === "replace_text").length, 1);
+    applyInput = false;
+    part.targetText = "Matahari";
+    const failed = await run();
+    assert.equal(failed.status, "unverified");
+    assert.equal(failed.actualTarget, part.targetText);
+  } finally { await client.stop(); }
 });
 
 test("preview-client sorts numeric-suffix previewPartIds naturally when part_ids is absent", async () => {
