@@ -1481,10 +1481,15 @@ export async function createMtGateway(options: MtGatewayOptions): Promise<MtGate
       return;
     }
 
+    const previewRead = method === "GET" && (
+      pathname === CONTROL_ROUTES.previewDocuments || pathname === CONTROL_ROUTES.previewActive || pathname === CONTROL_ROUTES.previewSegments
+    );
+    const desktopEditing = previewRead ? await options.previewClient?.preparePreview?.() : undefined;
     if (method === "GET" && pathname === CONTROL_ROUTES.previewDocuments) {
       const { unified } = buildUnifiedDocumentsSummary();
       sendJson(response, 200, {
         documents: unified,
+        desktopEditing,
         previewConnected: Boolean(options.previewClient?.getStatus().connected),
       });
       return;
@@ -1503,7 +1508,7 @@ export async function createMtGateway(options: MtGatewayOptions): Promise<MtGate
         ...(contextAfter === null ? {} : { contextAfter: Number(contextAfter) }),
         ...(settleMs === null ? {} : { settleMs: Number(settleMs) }),
       });
-      sendJson(response, 200, result);
+      sendJson(response, 200, { ...result, desktopEditing });
       return;
     }
 
@@ -1520,13 +1525,13 @@ export async function createMtGateway(options: MtGatewayOptions): Promise<MtGate
       sendJson(
         response,
         200,
-        options.previewClient.getDocumentSegments({
+        { desktopEditing, ...options.previewClient.getDocumentSegments({
           ...(documentId === undefined ? {} : { documentId }),
           ...(offset === null ? {} : { offset: Number(offset) }),
           ...(limit === null ? {} : { limit: Number(limit) }),
           onlyUntranslated,
           ...(query === undefined ? {} : { query }),
-        }),
+        }) },
       );
       return;
     }

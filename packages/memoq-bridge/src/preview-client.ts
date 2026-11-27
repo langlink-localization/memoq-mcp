@@ -1,5 +1,6 @@
 import { createDesktopWriter, type DesktopEditBatch, type EditResult } from "./desktop-edits.ts";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { release } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { type FocusedRange, normalizeLanguageCode } from "./contract.ts";
@@ -47,7 +48,15 @@ export interface PreviewStatus {
   activeTargetLanguage: string;
   activePreviewPartIds: string[];
   cachedDocuments: number;
-  desktopEditing?: { state: string; reason: string };
+  desktopEditing?: {
+    state: string;
+    reason: string;
+    lastPreviewEvent?: string;
+    refreshResult?: string;
+    cachedDocuments?: number;
+    osRelease?: string;
+    memoQVersion?: string;
+  };
 }
 
 export interface ActiveSegmentResult {
@@ -138,6 +147,7 @@ export interface PreviewClient {
   stop(): Promise<void>;
   getStatus(): PreviewStatus;
   listDocuments(): CachedPreviewDocumentSummary[];
+  preparePreview?(): Promise<NonNullable<PreviewStatus["desktopEditing"]>>;
   refreshParts(): Promise<void>;
   getActiveSegment(options?: {
     contextBefore?: number;
@@ -292,6 +302,11 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
   let lastEventAtMs = 0;
   let activeDocumentKey = "";
   let latestPartIds: string[] = [];
+  let recovery: Promise<void> | undefined;
+  let lastPreviewEvent = "none";
+  let refreshResult = "not_attempted";
+  let memoQVersion = "unknown";
+  let connectionEpoch = 0;
 
   function getOrCreateDocument(
     documentId: string,
@@ -349,7 +364,18 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
 
     if (type === "status") {
       state = String(event.state ?? "idle");
-      connected = event.connected === true;
+      const nextConnected = event.connected === true;
+      if (nextConnected && !connected) {
+        connectionEpoch++;
+        memoQVersion = String(event.memoQVersion || "unknown");
+        documents.clear();
+        latestPartIds = [];
+        activeDocumentKey = "";
+        recovery = undefined;
+        refreshResult = "not_attempted";
+        lastPreviewEvent = "connected";
+      }
+      connected = nextConnected;
       if (typeof event.previewToolId === "string" && event.previewToolId) {
         previewToolId = event.previewToolId;
       }
@@ -376,6 +402,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
       return;
     }
 
+    if (type === "part_ids" || type === "content_update" || type === "highlight_change") lastPreviewEvent = type;
     if (type === "part_ids") {
       const rawIds = Array.isArray(event.previewPartIds)
         ? event.previewPartIds.map((item) => String(item ?? "")).filter(Boolean)
@@ -460,7 +487,14 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
 
     if (type === "highlight_change") {
       const activeParts = Array.isArray(event.activeParts) ? event.activeParts : [];
-      if (activeParts.length === 0) return;
+      if (activeParts.length === 0) {
+        const doc = documents.get(activeDocumentKey);
+        if (doc) {
+          doc.activePreviewPartIds = [];
+          doc.revision = ++revision;
+        }
+        return;
+      }
 
       const first = activeParts[0] as Record<string, unknown>;
       const documentId = String(first.documentId ?? "").trim();
@@ -658,6 +692,45 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
     return newest;
   }
 
+  function desktopEditing() {
+    const doc = documents.get(activeDocumentKey);
+    let readiness = "unavailable";
+    let reason = "Preview is offline. Open the document in memoQ and connect Preview.";
+    if (connected) {
+      if (!doc?.parts.size) {
+        readiness = "waiting_for_document";
+        reason = "Preview is connected but no document content is visible. Select a target segment in the open memoQ document once. If already tried, share the readiness diagnostics.";
+      } else if (doc.activePreviewPartIds.length !== 1) {
+        readiness = "waiting_for_segment";
+        reason = "Document visible. Select one target segment in the memoQ editor.";
+      } else {
+        readiness = "probe_on_edit";
+        reason = "Document and segment visible. The editor and target will be verified before writing.";
+      }
+    }
+    return { state: readiness, reason, lastPreviewEvent, refreshResult, cachedDocuments: documents.size, osRelease: release(), memoQVersion };
+  }
+
+  // Share one bounded recovery across callers for the lifetime of this pipe connection.
+  async function preparePreview() {
+    if (desktopEditing().state === "waiting_for_document") {
+      recovery ??= (async () => {
+        const epoch = connectionEpoch;
+        refreshResult = "requested";
+        const ack = await sendCommand({ type: "refresh_parts" }, 1000);
+        const current = () => connected && epoch === connectionEpoch;
+        if (!current()) return;
+        refreshResult = ack.ok ? "acknowledged" : "failed";
+        const deadline = Date.now() + 500;
+        while (current() && !documents.get(activeDocumentKey)?.parts.size && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      })();
+      await recovery;
+    }
+    return desktopEditing();
+  }
+
   function getStatus(): PreviewStatus {
     const activeDoc = resolveDocument();
     return {
@@ -677,7 +750,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
       activeTargetLanguage: activeDoc?.targetLanguage ?? "",
       activePreviewPartIds: activeDoc?.activePreviewPartIds ?? [],
       cachedDocuments: documents.size,
-      desktopEditing: { state: connected ? "probe_on_edit" : "unavailable", reason: connected ? "Control and range checked per edit" : state },
+      desktopEditing: desktopEditing(),
     };
   }
 
@@ -961,8 +1034,11 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
   const applyEdits = createDesktopWriter(async (documentId, edit, plan, signal) => {
     const id = edit.previewPartId;
     const blocked = (reason: string): EditResult => ({ previewPartId: id, status: "blocked", reason });
+    const readiness = await preparePreview();
+    if (signal.aborted) return { previewPartId: id, status: "not_attempted", reason: "cancelled" };
+    if (readiness.state === "waiting_for_document" || readiness.state === "unavailable") return blocked(readiness.reason);
     const doc = documents.get(activeDocumentKey);
-    if (!connected || !doc || doc.documentId !== documentId || !doc.parts.has(id)) return blocked("Open the requested document and connect Preview.");
+    if (!doc || doc.documentId !== documentId || !doc.parts.has(id)) return blocked("Open the requested document and re-read its current segment IDs.");
     const first = await freshPart(doc, id, signal);
     if (!first) return blocked("No fresh content for this part. Re-read the document and its current part IDs.");
     const actualTarget = first.targetText;
@@ -1069,6 +1145,7 @@ export function createPreviewClient(options: PreviewClientOptions = {}): Preview
     stop,
     getStatus,
     listDocuments,
+    preparePreview,
     refreshParts,
     getActiveSegment,
     getDocumentSegments,

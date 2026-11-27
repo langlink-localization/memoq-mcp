@@ -404,6 +404,7 @@ export class BridgeHttpClient {
         }
       >;
       previewConnected: boolean;
+      desktopEditing?: { state: string; reason: string };
     }>("GET", CONTROL_ROUTES.previewDocuments, undefined, signal);
   }
 

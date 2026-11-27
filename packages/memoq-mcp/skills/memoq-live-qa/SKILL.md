@@ -12,6 +12,8 @@ whenToUse: The user asks to check, proofread, polish, QA, or inspect the active 
 
 1. 先调用 `memoq_status` 检查 Preview 连接状态与当前打开的文档。
    - 若 `preview.connected === false`，提示用户先打开 memoQ 并打开文档；如 memoQ 弹出外部预览工具授权框，点击允许。
+   - 直写前读取文档和句段。读取入口会在已连接但看不到文档时自动刷新一次。若仍为 `waiting_for_document`，告知“本次写入 0 句”，请用户切回目标文档并点一个译文句段。若用户已试过，提供 `desktopEditing` 诊断摘要，避免重复提示点击或重启。
+   - 已有确定译文时，可以征得用户同意后暂存并走预翻译。需要参考全文的任务须等到可以读取原文和译文。
 2. 检查当前句段或润色时，调用 `memoq_get_active_segment`。
    - **严格检查 `mappingCertain`**：若 `mappingCertain === false`（例如选中了多段或过滤器未推送活动段），必须向用户明确说明原因，不要凭猜测下结论。
    - 若用户要求检查整篇已缓存句段，分批调用 `memoq_get_document_segments`（`limit <= 50`），不要一次性拉取过多破坏上下文。
@@ -22,5 +24,5 @@ whenToUse: The user asks to check, proofread, polish, QA, or inspect the active 
 4. 若某句需要用户在 memoQ 中定位复核，调用 `memoq_focus_segment` 传入该句的 `previewPartId`，让 memoQ 编辑器直接跳转高亮到对应句段。
 5. 用户要求直接应用修改时，使用 `memoq_apply_edits`。每次限定一个 `documentId`，每条携带 `previewPartId`、完整的 `expectedSource`、`expectedTarget` 和唯一匹配的 `oldText` / `newText`。同一短语重复出现时，扩大上下文。专名调序由 Agent 按原译对应关系匹配。
    - memoQ 保持前台，工具通过快速查找读取实际选区。局部文字修改应避开内联对象，单句删除显式传空 `newText`。
-   - `applied` 和 `already_applied` 可计入完成。`conflict` 需结合现有译文重新判断。`blocked` 按返回原因检查活动文档、焦点、选区或输入法，再重新定位。`unverified` 可能已部分写入，先检查当前编辑器并读回，按实际差异修复。`not_attempted` 可在前项解决后继续。
+   - 按 `counts` 分别报告已写入并核对、原本已符合、冲突和未核实的句数。`conflict` 需结合现有译文重新判断。`blocked` 按返回原因检查活动文档、焦点、选区或输入法，再重新定位。`unverified` 可能已部分写入，先检查当前编辑器并读回，按实际差异修复。`not_attempted` 可在前项解决后继续。
    - 以实际探测结果判断能力。遇到不同版本或布局，优先复查控件及文档身份；只在目标和实际选区能够核实时提交修改。
