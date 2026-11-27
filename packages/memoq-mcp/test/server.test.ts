@@ -234,6 +234,9 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
     assert.deepEqual(ambiguousEdit.structuredContent, JSON.parse(ambiguousEdit.content[0].text));
     assert.equal(ambiguousEdit.structuredContent?.results[0].status, "not_attempted");
 
+    assert.equal(ambiguousEdit.structuredContent?.counts.applied, 0);
+    assert.equal(ambiguousEdit.structuredContent?.counts.not_attempted, 1);
+
     const listed = await client.listTools();
     assert.match(client.getInstructions() ?? "", /memoQ Desktop/u);
     assert.ok(listed.tools.every((tool) => tool.title && tool.annotations));
@@ -276,6 +279,10 @@ test("memoq-mcp exposes its tools and bridges Preview, Staging, Confirmed feedba
 
     const status = parseTextTool((await client.callTool({ name: "memoq_status", arguments: {} })) as never);
     assert.equal(typeof status.gateway, "object");
+    const connector = status.connector as { mcpVersion?: string; bridgeVersion?: string; comparison?: string };
+    assert.ok(connector.mcpVersion);
+    assert.equal(connector.bridgeVersion, (status.gateway as { version: string }).version);
+    assert.equal(connector.comparison, "shared_bridge");
     assert.equal(typeof status.preview, "object");
 
     const docsRes = parseTextTool((await client.callTool({ name: "memoq_list_documents", arguments: {} })) as never);

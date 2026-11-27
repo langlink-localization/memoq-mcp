@@ -4,7 +4,15 @@
 
 A local Windows **Model Context Protocol (MCP)** server for **memoQ Desktop (10 / 11 / 12)**, compatible with **Codex CLI**, **Claude Code**, **Cursor**, **WorkBuddy**, **ZCode**, and **Trae**.
 
-Connect your AI agent to memoQ Desktop for **translation, proofreading, polishing, and deterministic QA** — read live Preview segments, jump to segments in the editor, stage drafts with inline tag protection, review in a local bilingual workbench, and write approved translations back via memoQ Pre-translate.
+## New in 0.3.0: Edit translations directly in memoQ
+
+Open a document in memoQ and ask WorkBuddy or another connected AI assistant to polish existing translations, standardize names, or fix QA findings in bulk. **Edits go straight into the open document. You can skip the manual Pre-translate step.**
+
+> In this document, restore the source spelling of names inside 【】 in the translations. Keep the brackets, existing tags, and surrounding text. Apply the edits directly in memoQ.
+
+After sending the request, switch back to memoQ and keep the editor in the foreground while it writes.
+
+The assistant reads the target document and segments first. If Preview connects without a document, the tool refreshes once. If it still cannot see the document, select a target segment in memoQ. If you already tried that, ask the assistant for the connection diagnostics. The tool skips segments whose translations differ from the expected text and reads back each edit to verify it.
 
 ## Features
 

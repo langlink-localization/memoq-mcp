@@ -161,7 +161,7 @@ namespace LangLinkMemoQBridgeHelper
                         throw new InvalidOperationException(runtimeSettingsResponse.ErrorMessage ?? "memoQ preview runtime settings change was refused.");
                     }
 
-                    EmitStatus("connected", connected: true, error: string.Empty);
+                    EmitStatus("connected", connected: true, error: string.Empty, memoQVersion: GetServerVersion(pipe.ServerProcessId));
                     SendRefreshParts(pipe);
                     pipe.WaitUntilClosed();
                 }
@@ -619,7 +619,20 @@ namespace LangLinkMemoQBridgeHelper
             pending.WaitHandle.Set();
         }
 
-        private void EmitStatus(string state, bool connected, string error)
+        private static string GetServerVersion(uint pid)
+        {
+            if (pid == 0) return null;
+            try
+            {
+                using (var process = System.Diagnostics.Process.GetProcessById((int)pid))
+                    return process.MainModule?.FileVersionInfo.FileVersion;
+            }
+            catch (System.ComponentModel.Win32Exception) { return null; }
+            catch (ArgumentException) { return null; }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        private void EmitStatus(string state, bool connected, string error, string memoQVersion = null)
         {
             EmitJson(new Dictionary<string, object>
             {
@@ -627,6 +640,7 @@ namespace LangLinkMemoQBridgeHelper
                 ["state"] = state ?? "idle",
                 ["connected"] = connected,
                 ["previewToolId"] = _previewToolId.ToString(),
+                ["memoQVersion"] = memoQVersion,
                 ["lastError"] = error ?? string.Empty,
                 ["timestamp"] = DateTime.UtcNow.ToString("o")
             });

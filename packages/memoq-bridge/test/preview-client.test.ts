@@ -38,6 +38,44 @@ class MockHelperProcess extends EventEmitter implements PreviewSubprocessHandle 
   }
 }
 
+test("connected with zero documents: concurrent callers share recovery, writes stop and a new connection discards stale data", async () => {
+  const proc = new MockHelperProcess();
+  const client = createPreviewClient({ platform: "win32", helperExecutablePath: "test.exe", spawner: () => proc });
+  await client.start();
+  const signal = new AbortController().signal;
+  const part = { documentId: "private-project", previewPartId: "p", sourceText: "private-source", targetText: "private-target" };
+  const batch = { documentId: part.documentId, edits: [{
+    previewPartId: "p", expectedSource: part.sourceText, expectedTarget: part.targetText,
+    replacements: [{ oldText: "target", newText: "translation" }],
+  }] };
+  try {
+    proc.emitEvent({ type: "status", connected: true, state: "connected", memoQVersion: "11.2.38" });
+    assert.equal(client.getStatus().desktopEditing?.state, "waiting_for_document");
+    const [diagnostics, blocked] = await Promise.all([client.preparePreview!(), client.applyEdits!(batch, signal)]);
+    assert.equal(diagnostics.refreshResult, "acknowledged");
+    assert.equal(diagnostics.memoQVersion, "11.2.38");
+    assert.equal(blocked.results[0]?.status, "blocked");
+    await client.preparePreview!();
+    assert.deepEqual(proc.receivedCommands.map(c => c.type), ["refresh_parts"]);
+
+    proc.emitEvent({ type: "highlight_change", activeParts: [part] });
+    const ready = await client.preparePreview!();
+    assert.equal(ready.state, "probe_on_edit");
+    assert.doesNotMatch(JSON.stringify(ready), /private-/);
+    proc.emitEvent({ type: "highlight_change", activeParts: [] });
+    assert.equal(client.getStatus().desktopEditing?.state, "waiting_for_segment");
+    proc.emitEvent({ type: "status", state: "disconnected", connected: false });
+    assert.equal((await client.preparePreview!()).state, "unavailable");
+    proc.emitEvent({ type: "status", state: "connected", connected: true });
+    assert.equal(client.getStatus().cachedDocuments, 0);
+    setTimeout(() => proc.emitEvent({ type: "highlight_change", activeParts: [part] }), 30);
+    assert.equal((await client.preparePreview!()).state, "probe_on_edit");
+    assert.deepEqual(proc.receivedCommands.map(c => c.type), ["refresh_parts", "refresh_parts"]);
+  } finally {
+    await client.stop();
+  }
+});
+
 test("preview-client handles JSONL events, mappingCertain, pagination, and focusSegment", async () => {
   const proc = new MockHelperProcess();
   const client = createPreviewClient({

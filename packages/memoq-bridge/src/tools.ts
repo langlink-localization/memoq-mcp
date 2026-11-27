@@ -16,6 +16,10 @@ import {
 } from "./dll-installer.ts";
 import type { StageTranslationInput } from "./staging-store.ts";
 
+const readinessSchema = z.object({
+  cachedDocuments: z.number().int().nonnegative().optional(), osRelease: z.string().optional(), memoQVersion: z.string().optional(),
+  state: z.string(), reason: z.string(), lastPreviewEvent: z.string().optional(), refreshResult: z.string().optional(),
+}).optional();
 const READ_LOCAL = { readOnlyHint: true, openWorldHint: false } as const;
 const WRITE_LOCAL = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 const WRITE_IDEMPOTENT_LOCAL = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -29,7 +33,7 @@ interface MemoqToolOptions {
   getBridgeClient(): Promise<BridgeHttpClient>;
   getPort(): number;
   launchSetup(customInstallDir?: string): Promise<string>;
-  statusDetails?: () => Promise<Record<string, unknown>>;
+  statusDetails?: (status: Record<string, unknown>) => Promise<Record<string, unknown>>;
   defaultProjectDir?: () => string | undefined;
   packageRoot: string;
   dataDir?: string;
@@ -58,7 +62,7 @@ export function createMemoqTools(options: MemoqToolOptions) {
         const integ = status.integration as { status?: string } | undefined;
         return {
           ...status,
-          ...(await options.statusDetails?.()),
+          ...(await options.statusDetails?.(status)),
           port5271Owner: probe.owner,
           ...(integ?.status && integ.status !== "installed"
             ? {
@@ -69,7 +73,7 @@ export function createMemoqTools(options: MemoqToolOptions) {
           ...(coverage?.attentionMessage ? { warning: coverage.attentionMessage } : {}),
           ...(probe.owner === "memoq-ai-hub"
             ? {
-                note: "memoQ AI Hub is currently using port 5271. Preview tools work normally; to use agent staging via port 5271, close memoQ AI Hub or change MEMOQ_BRIDGE_PORT and plugin gateway port.",
+                note: "memoQ AI Hub is currently using port 5271. Check desktopEditing for Preview readiness; to use agent staging via port 5271, close memoQ AI Hub or change MEMOQ_BRIDGE_PORT and plugin gateway port.",
               }
             : {}),
         };
@@ -111,6 +115,7 @@ export function createMemoqTools(options: MemoqToolOptions) {
           "List all open memoQ documents and glued Views cached in Preview during this session, with per-document segment counts and staged review counts.",
         inputSchema: {},
         outputSchema: {
+          desktopEditing: readinessSchema,
           previewConnected: z.boolean(),
           documents: z.array(z.record(z.string(), z.unknown())),
           tip: z.string(),
@@ -121,7 +126,7 @@ export function createMemoqTools(options: MemoqToolOptions) {
         const res = await client.listPreviewDocuments(signal);
         return {
           ...res,
-          tip: "如需一次对整个 memoQ 项目的所有文档暂存翻译，请在 memoQ 列表全选文档 → Create View → Simply glue documents together 并打开该视图。",
+          tip: res.desktopEditing?.state === "waiting_for_document" ? res.desktopEditing.reason : "如需一次对整个 memoQ 项目的所有文档暂存翻译，请在 memoQ 列表全选文档 → Create View → Simply glue documents together 并打开该视图。",
         };
       },
     ),
@@ -141,6 +146,7 @@ export function createMemoqTools(options: MemoqToolOptions) {
           query: z.string().max(500).optional().describe("Substring filter across source text, target text, and Preview part ID."),
         },
         outputSchema: {
+          desktopEditing: readinessSchema,
           available: z.boolean(),
           reason: z.string().optional(),
           document: z.object({
@@ -207,9 +213,14 @@ export function createMemoqTools(options: MemoqToolOptions) {
         annotations: { ...WRITE_IDEMPOTENT_LOCAL, destructiveHint: true },
         description: "Directly edit uniquely matched target substrings in a single open document. Read the document first. On conflict review the observed value; on unverified re-read before retrying. Does not confirm segments.",
         inputSchema: desktopEditSchema.shape,
-        outputSchema: { results: z.array(editResultSchema) },
+        outputSchema: { results: z.array(editResultSchema), counts: z.record(z.string(), count) },
       },
-      async (batch, signal) => (await resolveClient()).applyEdits(batch, signal),
+      async (batch, signal) => {
+        const { results } = await (await resolveClient()).applyEdits(batch, signal);
+        const counts = { applied: 0, already_applied: 0, conflict: 0, blocked: 0, unverified: 0, not_attempted: 0 };
+        for (const row of results) counts[row.status]++;
+        return { results, counts };
+      },
     ),
 
     defineSharedTool(
